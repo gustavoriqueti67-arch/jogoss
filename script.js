@@ -4,12 +4,13 @@
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
 
-// POLIMENTO FINAL: Adicionando névoa para atmosfera
-// A cor da névoa, a que distância começa, a que distância termina
 scene.fog = new THREE.Fog(0x111111, 0, 20);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 1.7, 5);
+
+// CORREÇÃO 1: Evita que a câmera fique "torta" ao olhar para cima/baixo e para os lados.
+camera.rotation.order = 'YXZ';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -30,14 +31,12 @@ scene.add(directionalLight);
 // ======================================================
 let gameWon = false;
 
-// Chão
 const floorGeometry = new THREE.PlaneGeometry(100, 100);
 const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
 const floor = new THREE.Mesh(floorGeometry, floorMaterial);
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
-// Labirinto
 const wallSize = 2.0;
 const wallHeight = 3.0;
 const wallGeometry = new THREE.BoxGeometry(wallSize, wallHeight, wallSize);
@@ -80,7 +79,6 @@ function isWallAt(x, z) {
     return map[mapZ][mapX] === 1;
 }
 
-// Objeto de Vitória
 const goalGeometry = new THREE.TorusGeometry(0.5, 0.2, 16, 100);
 const goalMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xaaaa00 });
 const goal = new THREE.Mesh(goalGeometry, goalMaterial);
@@ -103,24 +101,46 @@ document.body.addEventListener('mousemove', (event) => {
     }
 });
 
+// CORREÇÃO 2: Lógica de movimento reescrita para ser mais intuitiva e corrigir a inversão.
 function updatePlayerMovement() {
-    const direction = new THREE.Vector3();
-    camera.getWorldDirection(direction);
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+
     const right = new THREE.Vector3();
-    right.crossVectors(camera.up, direction).normalize();
-    let moved = false;
+    right.crossVectors(forward, camera.up); // Calcula o vetor "direita" real
+
     let moveX = 0;
     let moveZ = 0;
-    if (keyboardState['KeyW']) { moveX += direction.x; moveZ += direction.z; moved = true; }
-    if (keyboardState['KeyS']) { moveX -= direction.x; moveZ -= direction.z; moved = true; }
-    if (keyboardState['KeyA']) { moveX += right.x; moveZ += right.z; moved = true; }
-    if (keyboardState['KeyD']) { moveX -= right.x; moveZ -= right.z; moved = true; }
-    if (moved) {
+
+    if (keyboardState['KeyW']) {
+        moveX += forward.x;
+        moveZ += forward.z;
+    }
+    if (keyboardState['KeyS']) {
+        moveX -= forward.x;
+        moveZ -= forward.z;
+    }
+    if (keyboardState['KeyA']) {
+        moveX -= right.x;
+        moveZ -= right.z;
+    }
+    if (keyboardState['KeyD']) {
+        moveX += right.x;
+        moveZ += right.z;
+    }
+
+    if (moveX !== 0 || moveZ !== 0) {
         const moveVector = new THREE.Vector2(moveX, moveZ).normalize().multiplyScalar(playerSpeed);
-        const nextX = camera.position.x - moveVector.x;
-        const nextZ = camera.position.z - moveVector.y;
-        if (!isWallAt(nextX, camera.position.z)) { camera.position.x = nextX; }
-        if (!isWallAt(camera.position.x, nextZ)) { camera.position.z = nextZ; }
+        
+        const nextX = camera.position.x + moveVector.x;
+        const nextZ = camera.position.z + moveVector.y;
+
+        if (!isWallAt(nextX, camera.position.z)) {
+            camera.position.x = nextX;
+        }
+        if (!isWallAt(camera.position.x, nextZ)) {
+            camera.position.z = nextZ;
+        }
     }
 }
 
