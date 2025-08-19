@@ -2,7 +2,7 @@
 // Configuração da Cena, Câmera e Renderizador
 // ======================================================
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111); // Um fundo mais escuro para o labirinto
+scene.background = new THREE.Color(0x111111);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 1.7, 5);
@@ -12,17 +12,14 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 // ======================================================
-// NOVA SEÇÃO: Iluminação
+// Iluminação
 // ======================================================
-// Uma luz ambiente ilumina todos os objetos da cena igualmente.
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Cor branca, intensidade média
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
 scene.add(ambientLight);
 
-// Uma luz direcional simula a luz do sol.
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-directionalLight.position.set(0, 10, 0); // Vindo de cima
+directionalLight.position.set(0, 10, 0);
 scene.add(directionalLight);
-
 
 // ======================================================
 // Objetos da Cena (Labirinto)
@@ -30,23 +27,19 @@ scene.add(directionalLight);
 
 // Chão
 const floorGeometry = new THREE.PlaneGeometry(100, 100);
-// NOVO: Usando MeshStandardMaterial para reagir à luz
-const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 }); 
+const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
 const floor = new THREE.Mesh(floorGeometry, floorMaterial);
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
-// --- INÍCIO DA LÓGICA DO LABIRINTO ---
+// --- LÓGICA DO LABIRINTO ---
+const wallSize = 2.0;
+const wallHeight = 3.0;
+const playerRadius = 0.25; // NOVO: "Largura" do jogador para colisões
 
-const wallSize = 2.0; // Tamanho de cada bloco da parede
-const wallHeight = 3.0; // Altura das paredes
-
-// NOVO: Geometria e Material reutilizáveis para as paredes (melhora o desempenho)
 const wallGeometry = new THREE.BoxGeometry(wallSize, wallHeight, wallSize);
 const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x888888 });
 
-// NOVO: O Mapa do Labirinto
-// 1 = Parede, 0 = Caminho livre
 const map = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
@@ -60,34 +53,35 @@ const map = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
 ];
 
-// NOVO: Função para construir o labirinto a partir do mapa
 function buildMaze() {
-    // Percorre as linhas do mapa
     for (let i = 0; i < map.length; i++) {
-        // Percorre as colunas do mapa
         for (let j = 0; j < map[i].length; j++) {
-            // Se o valor no mapa for 1, cria uma parede
             if (map[i][j] === 1) {
                 const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-                
-                // Calcula a posição da parede no mundo 3D
                 wall.position.x = (j - map[i].length / 2) * wallSize;
                 wall.position.y = wallHeight / 2;
                 wall.position.z = (i - map.length / 2) * wallSize;
-                
                 scene.add(wall);
             }
         }
     }
 }
+buildMaze();
+camera.position.set(-8, 1.7, -6);
 
-buildMaze(); // Chama a função para construir o labirinto
+// --- NOVA FUNÇÃO DE COLISÃO ---
+function isWallAt(x, z) {
+    // Converte a coordenada do mundo 3D para o índice do array do mapa
+    const mapX = Math.floor((x + wallSize / 2) / wallSize + map[0].length / 2);
+    const mapZ = Math.floor((z + wallSize / 2) / wallSize + map.length / 2);
 
-// AJUSTE: Mudar a posição inicial da câmera para dentro do labirinto
-camera.position.set(-8, 1.7, -6); // Posição (x, y, z) que corresponde a um corredor (map[2][1])
-
-// --- FIM DA LÓGICA DO LABIRINTO ---
-
+    // Verifica se está fora dos limites do mapa
+    if (mapX < 0 || mapX >= map[0].length || mapZ < 0 || mapZ >= map.length) {
+        return true; // Considera fora do mapa como uma parede
+    }
+    // Retorna true se a célula do mapa for 1 (parede)
+    return map[mapZ][mapX] === 1;
+}
 
 // ======================================================
 // Controles
@@ -107,22 +101,56 @@ document.body.addEventListener('mousemove', (event) => {
     }
 });
 
+// --- FUNÇÃO DE MOVIMENTO ATUALIZADA COM COLISÃO ---
 function updatePlayerMovement() {
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction); // Pega a direção para onde a câmera está olhando
+
+    const right = new THREE.Vector3();
+    right.crossVectors(camera.up, direction).normalize(); // Pega o vetor para a direita
+
+    let moved = false;
+    let moveX = 0;
+    let moveZ = 0;
+
     if (keyboardState['KeyW']) {
-        camera.position.z -= Math.cos(camera.rotation.y) * playerSpeed;
-        camera.position.x -= Math.sin(camera.rotation.y) * playerSpeed;
+        moveX += direction.x;
+        moveZ += direction.z;
+        moved = true;
     }
     if (keyboardState['KeyS']) {
-        camera.position.z += Math.cos(camera.rotation.y) * playerSpeed;
-        camera.position.x += Math.sin(camera.rotation.y) * playerSpeed;
+        moveX -= direction.x;
+        moveZ -= direction.z;
+        moved = true;
     }
     if (keyboardState['KeyA']) {
-        camera.position.z -= Math.cos(camera.rotation.y + Math.PI / 2) * playerSpeed;
-        camera.position.x -= Math.sin(camera.rotation.y + Math.PI / 2) * playerSpeed;
+        moveX += right.x;
+        moveZ += right.z;
+        moved = true;
     }
     if (keyboardState['KeyD']) {
-        camera.position.z += Math.cos(camera.rotation.y + Math.PI / 2) * playerSpeed;
-        camera.position.x += Math.sin(camera.rotation.y + Math.PI / 2) * playerSpeed;
+        moveX -= right.x;
+        moveZ -= right.z;
+        moved = true;
+    }
+
+    if (moved) {
+        // Normaliza o vetor de movimento para evitar velocidade maior na diagonal
+        const moveVector = new THREE.Vector2(moveX, moveZ).normalize().multiplyScalar(playerSpeed);
+        
+        // Calcula a próxima posição
+        const nextX = camera.position.x - moveVector.x;
+        const nextZ = camera.position.z - moveVector.y; // Usamos y do Vector2 para o z do mundo 3D
+
+        // Verifica colisão na direção X
+        if (!isWallAt(nextX, camera.position.z)) {
+            camera.position.x = nextX;
+        }
+
+        // Verifica colisão na direção Z
+        if (!isWallAt(camera.position.x, nextZ)) {
+            camera.position.z = nextZ;
+        }
     }
 }
 
