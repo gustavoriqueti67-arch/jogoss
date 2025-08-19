@@ -22,8 +22,9 @@ directionalLight.position.set(0, 10, 0);
 scene.add(directionalLight);
 
 // ======================================================
-// Objetos da Cena (Labirinto)
+// Objetos da Cena (Labirinto e Objetivo)
 // ======================================================
+let gameWon = false; // NOVA variável para controlar o estado do jogo
 
 // Chão
 const floorGeometry = new THREE.PlaneGeometry(100, 100);
@@ -32,14 +33,11 @@ const floor = new THREE.Mesh(floorGeometry, floorMaterial);
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
-// --- LÓGICA DO LABIRINTO ---
+// Labirinto
 const wallSize = 2.0;
 const wallHeight = 3.0;
-const playerRadius = 0.25; // NOVO: "Largura" do jogador para colisões
-
 const wallGeometry = new THREE.BoxGeometry(wallSize, wallHeight, wallSize);
 const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x888888 });
-
 const map = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
@@ -49,7 +47,7 @@ const map = [
     [1, 0, 0, 0, 0, 1, 0, 1, 0, 1],
     [1, 1, 1, 1, 0, 1, 0, 1, 0, 1],
     [1, 0, 0, 0, 0, 0, 0, 1, 0, 1],
-    [1, 0, 1, 1, 1, 1, 1, 1, 0, 1],
+    [1, 0, 1, 1, 1, 1, 1, 1, 0, 1], // Ponto de chegada será na linha 8, coluna 8 (índice)
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
 ];
 
@@ -67,32 +65,41 @@ function buildMaze() {
     }
 }
 buildMaze();
-camera.position.set(-8, 1.7, -6);
+camera.position.set(-8, 1.7, -6); // Posição inicial no corredor map[2][1]
 
-// --- NOVA FUNÇÃO DE COLISÃO ---
 function isWallAt(x, z) {
-    // Converte a coordenada do mundo 3D para o índice do array do mapa
     const mapX = Math.floor((x + wallSize / 2) / wallSize + map[0].length / 2);
     const mapZ = Math.floor((z + wallSize / 2) / wallSize + map.length / 2);
-
-    // Verifica se está fora dos limites do mapa
     if (mapX < 0 || mapX >= map[0].length || mapZ < 0 || mapZ >= map.length) {
-        return true; // Considera fora do mapa como uma parede
+        return true;
     }
-    // Retorna true se a célula do mapa for 1 (parede)
     return map[mapZ][mapX] === 1;
 }
+
+// --- NOVO: OBJETO DE VITÓRIA ---
+const goalGeometry = new THREE.TorusGeometry(0.5, 0.2, 16, 100);
+const goalMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffff00, // Amarelo
+    emissive: 0xaaaa00 // Faz o material emitir luz, parecendo brilhar
+});
+const goal = new THREE.Mesh(goalGeometry, goalMaterial);
+// Posiciona o objetivo no mundo 3D (correspondente ao map[8][8])
+goal.position.set(
+    (8 - map[0].length / 2) * wallSize,
+    1.0,
+    (8 - map.length / 2) * wallSize
+);
+scene.add(goal);
+
 
 // ======================================================
 // Controles
 // ======================================================
 const playerSpeed = 0.1;
 const keyboardState = {};
-
 window.addEventListener('keydown', (event) => { keyboardState[event.code] = true; });
 window.addEventListener('keyup', (event) => { keyboardState[event.code] = false; });
-
-document.body.addEventListener('click', () => { document.body.requestPointerLock(); });
+document.body.addEventListener('click', () => { if (!gameWon) document.body.requestPointerLock(); });
 document.body.addEventListener('mousemove', (event) => {
     if (document.pointerLockElement === document.body) {
         camera.rotation.y -= event.movementX / 500;
@@ -101,56 +108,38 @@ document.body.addEventListener('mousemove', (event) => {
     }
 });
 
-// --- FUNÇÃO DE MOVIMENTO ATUALIZADA COM COLISÃO ---
 function updatePlayerMovement() {
     const direction = new THREE.Vector3();
-    camera.getWorldDirection(direction); // Pega a direção para onde a câmera está olhando
-
+    camera.getWorldDirection(direction);
     const right = new THREE.Vector3();
-    right.crossVectors(camera.up, direction).normalize(); // Pega o vetor para a direita
-
+    right.crossVectors(camera.up, direction).normalize();
     let moved = false;
     let moveX = 0;
     let moveZ = 0;
 
-    if (keyboardState['KeyW']) {
-        moveX += direction.x;
-        moveZ += direction.z;
-        moved = true;
-    }
-    if (keyboardState['KeyS']) {
-        moveX -= direction.x;
-        moveZ -= direction.z;
-        moved = true;
-    }
-    if (keyboardState['KeyA']) {
-        moveX += right.x;
-        moveZ += right.z;
-        moved = true;
-    }
-    if (keyboardState['KeyD']) {
-        moveX -= right.x;
-        moveZ -= right.z;
-        moved = true;
-    }
+    if (keyboardState['KeyW']) { moveX += direction.x; moveZ += direction.z; moved = true; }
+    if (keyboardState['KeyS']) { moveX -= direction.x; moveZ -= direction.z; moved = true; }
+    if (keyboardState['KeyA']) { moveX += right.x; moveZ += right.z; moved = true; }
+    if (keyboardState['KeyD']) { moveX -= right.x; moveZ -= right.z; moved = true; }
 
     if (moved) {
-        // Normaliza o vetor de movimento para evitar velocidade maior na diagonal
         const moveVector = new THREE.Vector2(moveX, moveZ).normalize().multiplyScalar(playerSpeed);
-        
-        // Calcula a próxima posição
         const nextX = camera.position.x - moveVector.x;
-        const nextZ = camera.position.z - moveVector.y; // Usamos y do Vector2 para o z do mundo 3D
+        const nextZ = camera.position.z - moveVector.y;
+        if (!isWallAt(nextX, camera.position.z)) { camera.position.x = nextX; }
+        if (!isWallAt(camera.position.x, nextZ)) { camera.position.z = nextZ; }
+    }
+}
 
-        // Verifica colisão na direção X
-        if (!isWallAt(nextX, camera.position.z)) {
-            camera.position.x = nextX;
-        }
+// --- NOVA FUNÇÃO DE VITÓRIA ---
+function checkWinCondition() {
+    if (gameWon) return; // Se já ganhou, não faz nada
 
-        // Verifica colisão na direção Z
-        if (!isWallAt(camera.position.x, nextZ)) {
-            camera.position.z = nextZ;
-        }
+    const distance = camera.position.distanceTo(goal.position);
+    if (distance < 1.0) { // Se a distância for menor que 1 unidade
+        gameWon = true;
+        document.getElementById('win-screen').style.display = 'block';
+        document.exitPointerLock(); // Libera o cursor do mouse
     }
 }
 
@@ -159,7 +148,14 @@ function updatePlayerMovement() {
 // ======================================================
 function animate() {
     requestAnimationFrame(animate);
-    updatePlayerMovement();
+
+    if (!gameWon) { // Só atualiza o jogo se não tiver vencido
+        updatePlayerMovement();
+        goal.rotation.y += 0.01; // Faz o objetivo girar para chamar atenção
+        goal.rotation.x += 0.01;
+    }
+    
+    checkWinCondition();
     renderer.render(scene, camera);
 }
 animate();
