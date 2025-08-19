@@ -4,6 +4,10 @@
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
 
+// POLIMENTO FINAL: Adicionando névoa para atmosfera
+// A cor da névoa, a que distância começa, a que distância termina
+scene.fog = new THREE.Fog(0x111111, 0, 20);
+
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 1.7, 5);
 
@@ -24,7 +28,7 @@ scene.add(directionalLight);
 // ======================================================
 // Objetos da Cena (Labirinto e Objetivo)
 // ======================================================
-let gameWon = false; // NOVA variável para controlar o estado do jogo
+let gameWon = false;
 
 // Chão
 const floorGeometry = new THREE.PlaneGeometry(100, 100);
@@ -47,7 +51,7 @@ const map = [
     [1, 0, 0, 0, 0, 1, 0, 1, 0, 1],
     [1, 1, 1, 1, 0, 1, 0, 1, 0, 1],
     [1, 0, 0, 0, 0, 0, 0, 1, 0, 1],
-    [1, 0, 1, 1, 1, 1, 1, 1, 0, 1], // Ponto de chegada será na linha 8, coluna 8 (índice)
+    [1, 0, 1, 1, 1, 1, 1, 1, 0, 1],
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
 ];
 
@@ -65,7 +69,7 @@ function buildMaze() {
     }
 }
 buildMaze();
-camera.position.set(-8, 1.7, -6); // Posição inicial no corredor map[2][1]
+camera.position.set(-8, 1.7, -6);
 
 function isWallAt(x, z) {
     const mapX = Math.floor((x + wallSize / 2) / wallSize + map[0].length / 2);
@@ -76,21 +80,12 @@ function isWallAt(x, z) {
     return map[mapZ][mapX] === 1;
 }
 
-// --- NOVO: OBJETO DE VITÓRIA ---
+// Objeto de Vitória
 const goalGeometry = new THREE.TorusGeometry(0.5, 0.2, 16, 100);
-const goalMaterial = new THREE.MeshStandardMaterial({
-    color: 0xffff00, // Amarelo
-    emissive: 0xaaaa00 // Faz o material emitir luz, parecendo brilhar
-});
+const goalMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xaaaa00 });
 const goal = new THREE.Mesh(goalGeometry, goalMaterial);
-// Posiciona o objetivo no mundo 3D (correspondente ao map[8][8])
-goal.position.set(
-    (8 - map[0].length / 2) * wallSize,
-    1.0,
-    (8 - map.length / 2) * wallSize
-);
+goal.position.set((8 - map[0].length / 2) * wallSize, 1.0, (8 - map.length / 2) * wallSize);
 scene.add(goal);
-
 
 // ======================================================
 // Controles
@@ -116,12 +111,10 @@ function updatePlayerMovement() {
     let moved = false;
     let moveX = 0;
     let moveZ = 0;
-
     if (keyboardState['KeyW']) { moveX += direction.x; moveZ += direction.z; moved = true; }
     if (keyboardState['KeyS']) { moveX -= direction.x; moveZ -= direction.z; moved = true; }
     if (keyboardState['KeyA']) { moveX += right.x; moveZ += right.z; moved = true; }
     if (keyboardState['KeyD']) { moveX -= right.x; moveZ -= right.z; moved = true; }
-
     if (moved) {
         const moveVector = new THREE.Vector2(moveX, moveZ).normalize().multiplyScalar(playerSpeed);
         const nextX = camera.position.x - moveVector.x;
@@ -131,15 +124,13 @@ function updatePlayerMovement() {
     }
 }
 
-// --- NOVA FUNÇÃO DE VITÓRIA ---
 function checkWinCondition() {
-    if (gameWon) return; // Se já ganhou, não faz nada
-
+    if (gameWon) return;
     const distance = camera.position.distanceTo(goal.position);
-    if (distance < 1.0) { // Se a distância for menor que 1 unidade
+    if (distance < 1.0) {
         gameWon = true;
         document.getElementById('win-screen').style.display = 'block';
-        document.exitPointerLock(); // Libera o cursor do mouse
+        document.exitPointerLock();
     }
 }
 
@@ -148,13 +139,11 @@ function checkWinCondition() {
 // ======================================================
 function animate() {
     requestAnimationFrame(animate);
-
-    if (!gameWon) { // Só atualiza o jogo se não tiver vencido
+    if (!gameWon) {
         updatePlayerMovement();
-        goal.rotation.y += 0.01; // Faz o objetivo girar para chamar atenção
+        goal.rotation.y += 0.01;
         goal.rotation.x += 0.01;
     }
-    
     checkWinCondition();
     renderer.render(scene, camera);
 }
