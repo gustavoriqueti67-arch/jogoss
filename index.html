@@ -2,7 +2,7 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Labirinto 3D Avançado com IA</title>
+    <title>Labirinto 3D Avançado com IA (Corrigido)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; cursor: pointer; }
         canvas { display: block; }
@@ -21,6 +21,7 @@
             color: white; font-family: 'Courier New', Courier, monospace;
             background-color: rgba(0, 0, 0, 0.8);
             text-align: center;
+            z-index: 10;
         }
         .overlay h1 { font-size: 4em; margin-bottom: 20px; text-shadow: 3px 3px #ff0000; }
         .overlay p { font-size: 1.5em; max-width: 80%; }
@@ -62,18 +63,25 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
 
     <script>
+    // ============== CORREÇÃO PRINCIPAL ==============
+    // Espera todo o conteúdo da página carregar antes de executar o script.
+    // Isso garante que todos os elementos (como 'start-screen') existam.
+    window.addEventListener('DOMContentLoaded', () => {
+
         // ============== 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS ==============
         let scene, camera, renderer, controls;
         let lastTime = performance.now();
-        const objects = [];
         let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
         const velocity = new THREE.Vector3();
         const direction = new THREE.Vector3();
         let gameOver = false;
 
-        const MAZE_SIZE = 21; // Tamanho do labirinto (deve ser ímpar)
+        // --- Constantes de Jogo (fácil de ajustar) ---
+        const MAZE_SIZE = 21; 
         const CELL_SIZE = 10;
         const WALL_HEIGHT = 5;
+        const PLAYER_SPEED = 40.0;
+        const ENEMY_SPEED = 2.5;
 
         // Elementos da UI
         const startScreen = document.getElementById('start-screen');
@@ -91,7 +99,6 @@
         // Jogo
         let maze, treasure, enemy;
         let enemyPath = [];
-        const ENEMY_SPEED = 2.0; // Velocidade do inimigo por segundo
         let pathUpdateCounter = 0;
 
         init();
@@ -99,31 +106,25 @@
 
         // ============== 2. FUNÇÕES PRINCIPAIS (INIT E ANIMATE) ==============
         function init() {
-            // Cena e Câmera
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x1a2a3a);
-            scene.fog = new THREE.Fog(0x1a2a3a, 0, MAZE_SIZE * CELL_SIZE * 0.6);
+            scene.fog = new THREE.Fog(0x1a2a3a, 0, MAZE_SIZE * CELL_SIZE * 0.7);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.y = WALL_HEIGHT / 2;
 
-            // Luzes
             const ambientLight = new THREE.AmbientLight(0x606060);
             scene.add(ambientLight);
             const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
             directionalLight.position.set(50, 50, 50);
             scene.add(directionalLight);
 
-            // Renderizador
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // Controles com o Mouse
             controls = new THREE.PointerLockControls(camera, document.body);
-            startScreen.addEventListener('click', () => {
-                controls.lock();
-            });
+            startScreen.addEventListener('click', () => controls.lock());
             controls.addEventListener('lock', () => {
                 startScreen.classList.add('hidden');
                 crosshair.classList.remove('hidden');
@@ -134,134 +135,120 @@
             });
             scene.add(controls.getObject());
 
-            // Controles do Teclado
-            const onKeyDown = (event) => {
-                switch (event.code) {
-                    case 'ArrowUp': case 'KeyW': moveForward = true; break;
-                    case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
-                    case 'ArrowDown': case 'KeyS': moveBackward = true; break;
-                    case 'ArrowRight': case 'KeyD': moveRight = true; break;
-                }
-            };
-            const onKeyUp = (event) => {
-                switch (event.code) {
-                    case 'ArrowUp': case 'KeyW': moveForward = false; break;
-                    case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
-                    case 'ArrowDown': case 'KeyS': moveBackward = false; break;
-                    case 'ArrowRight': case 'KeyD': moveRight = false; break;
-                }
-            };
-            document.addEventListener('keydown', onKeyDown);
-            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('keydown', (e) => onKeyEvent(e, true));
+            document.addEventListener('keyup', (e) => onKeyEvent(e, false));
 
-            // Geração do Mundo
             maze = generateMaze(MAZE_SIZE, MAZE_SIZE);
             createWorldFromMaze(maze);
-
-            // Posicionamento de Jogador, Tesouro e Inimigo
-            camera.position.x = (1 - MAZE_SIZE / 2) * CELL_SIZE;
-            camera.position.z = (1 - MAZE_SIZE / 2) * CELL_SIZE;
+            
+            camera.position.x = (1 - MAZE_SIZE / 2 + 0.5) * CELL_SIZE;
+            camera.position.z = (1 - MAZE_SIZE / 2 + 0.5) * CELL_SIZE;
 
             const treasureGeometry = new THREE.DodecahedronGeometry(1.5);
-            const treasureMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, roughness: 0.2, metalness: 0.8 });
+            const treasureMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffaa00, roughness: 0.2, metalness: 0.8 });
             treasure = new THREE.Mesh(treasureGeometry, treasureMaterial);
             treasure.position.set(
-                (MAZE_SIZE - 2 - MAZE_SIZE / 2) * CELL_SIZE,
+                (MAZE_SIZE - 2 - MAZE_SIZE / 2 + 0.5) * CELL_SIZE,
                 WALL_HEIGHT / 2,
-                (MAZE_SIZE - 2 - MAZE_SIZE / 2) * CELL_SIZE
+                (MAZE_SIZE - 2 - MAZE_SIZE / 2 + 0.5) * CELL_SIZE
             );
             scene.add(treasure);
 
-            const enemyGeometry = new THREE.SphereGeometry(1.5);
+            const enemyGeometry = new THREE.SphereGeometry(1.5, 16, 16);
             const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0x660000 });
             enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
             enemy.position.set(
-                (MAZE_SIZE - 2 - MAZE_SIZE / 2) * CELL_SIZE,
+                (MAZE_SIZE - 2 - MAZE_SIZE / 2 + 0.5) * CELL_SIZE,
                 WALL_HEIGHT / 2,
-                (1 - MAZE_SIZE / 2) * CELL_SIZE
+                (1 - MAZE_SIZE / 2 + 0.5) * CELL_SIZE
             );
             scene.add(enemy);
 
-            // Responsividade
             window.addEventListener('resize', onWindowResize);
+        }
+
+        function onKeyEvent(event, isPressed) {
+            switch (event.code) {
+                case 'ArrowUp': case 'KeyW': moveForward = isPressed; break;
+                case 'ArrowLeft': case 'KeyA': moveLeft = isPressed; break;
+                case 'ArrowDown': case 'KeyS': moveBackward = isPressed; break;
+                case 'ArrowRight': case 'KeyD': moveRight = isPressed; break;
+            }
         }
 
         function animate() {
             requestAnimationFrame(animate);
-
             if (gameOver) return;
 
             const time = performance.now();
             const delta = (time - lastTime) / 1000;
 
-            // Movimento do jogador
             if (controls.isLocked === true) {
                 velocity.x -= velocity.x * 10.0 * delta;
                 velocity.z -= velocity.z * 10.0 * delta;
 
                 direction.z = Number(moveForward) - Number(moveBackward);
                 direction.x = Number(moveRight) - Number(moveLeft);
-                direction.normalize(); // garante movimento consistente em todas as direções
+                direction.normalize();
 
-                if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
-                if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+                if (moveForward || moveBackward) velocity.z -= direction.z * PLAYER_SPEED * 10.0 * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * PLAYER_SPEED * 10.0 * delta;
 
-                // Salva a posição antiga para checar colisão
-                const oldPosition = controls.getObject().position.clone();
-                
+                // --- MELHORIA: Colisão mais suave ---
+                // Move o jogador em um eixo de cada vez e verifica a colisão.
+                // Isso permite "deslizar" nas paredes.
+                const oldX = controls.getObject().position.x;
+                const oldZ = controls.getObject().position.z;
+
                 controls.moveRight(-velocity.x * delta);
-                controls.moveForward(-velocity.z * delta);
-
-                // Checagem de colisão
-                const newPosition = controls.getObject().position;
-                const playerGridX = Math.floor((newPosition.x / CELL_SIZE) + MAZE_SIZE / 2);
-                const playerGridZ = Math.floor((newPosition.z / CELL_SIZE) + MAZE_SIZE / 2);
+                if (isWall(controls.getObject().position.x, oldZ)) {
+                    controls.getObject().position.x = oldX;
+                }
                 
-                if (maze[playerGridZ] && maze[playerGridZ][playerGridX] === 1) {
-                    controls.getObject().position.copy(oldPosition); // Se colidiu, volta
+                controls.moveForward(-velocity.z * delta);
+                if (isWall(controls.getObject().position.x, controls.getObject().position.z)) {
+                    controls.getObject().position.z = oldZ;
                 }
             }
             
-            // Lógica do Inimigo
             pathUpdateCounter += delta;
-            if (pathUpdateCounter > 1.0) { // Atualiza o caminho a cada 1 segundo
+            if (pathUpdateCounter > 1.0) {
                 updateEnemyPath();
                 pathUpdateCounter = 0;
             }
             moveEnemy(delta);
 
-            // Animação do tesouro
             treasure.rotation.y += 0.5 * delta;
             treasure.rotation.x += 0.5 * delta;
 
-            // Checagem de condições de vitória/derrota
-            if (camera.position.distanceTo(treasure.position) < 3) {
-                winGame();
-            }
-            if (camera.position.distanceTo(enemy.position) < 2) {
-                loseGame();
-            }
+            if (camera.position.distanceTo(treasure.position) < 3) winGame();
+            if (camera.position.distanceTo(enemy.position) < 2) loseGame();
 
             drawMinimap();
             lastTime = time;
             renderer.render(scene, camera);
         }
+
+        function isWall(worldX, worldZ) {
+            const padding = 0.5; // Impede que o jogador entre um pouco na parede
+            const gridX = Math.floor((worldX / CELL_SIZE) + MAZE_SIZE / 2 + (worldX > 0 ? padding : -padding));
+            const gridZ = Math.floor((worldZ / CELL_SIZE) + MAZE_SIZE / 2 + (worldZ > 0 ? padding : -padding));
+            
+            if (gridX < 0 || gridX >= MAZE_SIZE || gridZ < 0 || gridZ >= MAZE_SIZE) return true;
+            return maze[gridZ][gridX] === 1;
+        }
         
         // ============== 3. IA - GERAÇÃO DO LABIRINTO ==============
         function generateMaze(width, height) {
-            let maze = Array(height).fill(null).map(() => Array(width).fill(1)); // 1 = parede
-            let stack = [];
-            let startX = 1, startY = 1;
-            
-            maze[startY][startX] = 0; // 0 = caminho
-            stack.push([startX, startY]);
+            let maze = Array(height).fill(null).map(() => Array(width).fill(1));
+            let stack = [[1, 1]];
+            maze[1][1] = 0;
 
             while (stack.length > 0) {
                 let [x, y] = stack[stack.length - 1];
                 let neighbors = [];
-                // Checa vizinhos (distância de 2 células)
                 for (let [dx, dy] of [[0, -2], [0, 2], [-2, 0], [2, 0]]) {
-                    let nx = x + dx, ny = y + dy;
+                    let [nx, ny] = [x + dx, y + dy];
                     if (ny > 0 && ny < height - 1 && nx > 0 && nx < width - 1 && maze[ny][nx] === 1) {
                         neighbors.push([nx, ny]);
                     }
@@ -269,8 +256,8 @@
                 
                 if (neighbors.length > 0) {
                     let [nextX, nextY] = neighbors[Math.floor(Math.random() * neighbors.length)];
-                    maze[nextY][nextX] = 0; // Abre caminho para o vizinho
-                    maze[(y + nextY) / 2][(x + nextX) / 2] = 0; // Abre parede entre eles
+                    maze[nextY][nextX] = 0;
+                    maze[(y + nextY) / 2][(x + nextX) / 2] = 0;
                     stack.push([nextX, nextY]);
                 } else {
                     stack.pop();
@@ -283,28 +270,27 @@
         function aStar(start, end) {
             let openSet = [start];
             let cameFrom = new Map();
-
-            let gScore = new Map();
-            gScore.set(JSON.stringify(start), 0);
-
-            let fScore = new Map();
-            fScore.set(JSON.stringify(start), heuristic(start, end));
+            let gScore = new Map([[JSON.stringify(start), 0]]);
+            let fScore = new Map([[JSON.stringify(start), heuristic(start, end)]]);
 
             while (openSet.length > 0) {
                 let current = openSet.reduce((a, b) => fScore.get(JSON.stringify(a)) < fScore.get(JSON.stringify(b)) ? a : b);
                 
                 if (current.x === end.x && current.y === end.y) {
-                    return reconstructPath(cameFrom, current);
+                    let path = [];
+                    while (current) {
+                        path.unshift(current);
+                        current = cameFrom.get(JSON.stringify(current));
+                    }
+                    return path;
                 }
 
-                openSet = openSet.filter(node => !(node.x === current.x && node.y === current.y));
+                openSet = openSet.filter(node => node.x !== current.x || node.y !== current.y);
 
                 for (let [dx, dy] of [[0,1], [0,-1], [1,0], [-1,0]]) {
                     let neighbor = { x: current.x + dx, y: current.y + dy };
-                    if (neighbor.x < 0 || neighbor.x >= MAZE_SIZE || neighbor.y < 0 || neighbor.y >= MAZE_SIZE || maze[neighbor.y][neighbor.x] === 1) {
-                        continue;
-                    }
-
+                    if (neighbor.x < 0 || neighbor.x >= MAZE_SIZE || neighbor.y < 0 || neighbor.y >= MAZE_SIZE || maze[neighbor.y][neighbor.x] === 1) continue;
+                    
                     let tentativeGScore = gScore.get(JSON.stringify(current)) + 1;
                     if (tentativeGScore < (gScore.get(JSON.stringify(neighbor)) || Infinity)) {
                         cameFrom.set(JSON.stringify(neighbor), current);
@@ -316,46 +302,32 @@
                     }
                 }
             }
-            return []; // Sem caminho
+            return [];
         }
 
-        function heuristic(a, b) { // Distância de Manhattan
-            return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-        }
-
-        function reconstructPath(cameFrom, current) {
-            const totalPath = [current];
-            while (cameFrom.has(JSON.stringify(current))) {
-                current = cameFrom.get(JSON.stringify(current));
-                totalPath.unshift(current);
-            }
-            return totalPath;
-        }
+        function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
         
         // ============== 5. LÓGICA DO INIMIGO E MUNDO ==============
         function updateEnemyPath() {
             const enemyGridPos = {
-                x: Math.round((enemy.position.x / CELL_SIZE) + MAZE_SIZE / 2),
-                y: Math.round((enemy.position.z / CELL_SIZE) + MAZE_SIZE / 2)
+                x: Math.floor((enemy.position.x / CELL_SIZE) + MAZE_SIZE / 2),
+                y: Math.floor((enemy.position.z / CELL_SIZE) + MAZE_SIZE / 2)
             };
             const playerGridPos = {
                 x: Math.floor((camera.position.x / CELL_SIZE) + MAZE_SIZE / 2),
                 y: Math.floor((camera.position.z / CELL_SIZE) + MAZE_SIZE / 2)
             };
             enemyPath = aStar(enemyGridPos, playerGridPos);
-            if (enemyPath && enemyPath.length > 1) {
-                enemyPath.shift(); // Remove a posição atual do inimigo
-            }
+            if (enemyPath && enemyPath.length > 0) enemyPath.shift();
         }
 
         function moveEnemy(delta) {
             if (!enemyPath || enemyPath.length === 0) return;
-
             const nextPosGrid = enemyPath[0];
             const targetPosWorld = new THREE.Vector3(
-                (nextPosGrid.x - MAZE_SIZE / 2) * CELL_SIZE,
+                (nextPosGrid.x - MAZE_SIZE / 2 + 0.5) * CELL_SIZE,
                 WALL_HEIGHT / 2,
-                (nextPosGrid.y - MAZE_SIZE / 2) * CELL_SIZE
+                (nextPosGrid.y - MAZE_SIZE / 2 + 0.5) * CELL_SIZE
             );
 
             const direction = targetPosWorld.clone().sub(enemy.position).normalize();
@@ -364,7 +336,7 @@
             if (distance > 0.1) {
                 enemy.position.add(direction.multiplyScalar(ENEMY_SPEED * delta));
             } else {
-                enemyPath.shift(); // Chegou ao nó, remove e vai para o próximo
+                enemyPath.shift();
             }
         }
         
@@ -378,11 +350,7 @@
                 for (let x = 0; x < MAZE_SIZE; x++) {
                     if (mazeData[y][x] === 1) {
                         const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-                        wall.position.set(
-                            (x - MAZE_SIZE / 2) * CELL_SIZE,
-                            WALL_HEIGHT / 2,
-                            (y - MAZE_SIZE / 2) * CELL_SIZE
-                        );
+                        wall.position.set((x - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (y - MAZE_SIZE / 2 + 0.5) * CELL_SIZE);
                         scene.add(wall);
                     }
                 }
@@ -392,7 +360,7 @@
             scene.add(floor);
         }
 
-        // ============== 6. FUNÇÕES AUXILIARES (UI, MINIMAPA, ETC) ==============
+        // ============== 6. FUNÇÕES AUXILIARES ==============
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
@@ -413,30 +381,28 @@
 
         function drawMinimap() {
             minimapCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
-            // Desenha labirinto
             for (let y = 0; y < MAZE_SIZE; y++) {
                 for (let x = 0; x < MAZE_SIZE; x++) {
                     minimapCtx.fillStyle = maze[y][x] === 1 ? 'white' : '#555';
                     minimapCtx.fillRect(x * MINIMAP_SCALE, y * MINIMAP_SCALE, MINIMAP_SCALE, MINIMAP_SCALE);
                 }
             }
-            // Desenha jogador
-            const playerX = (camera.position.x / CELL_SIZE + MAZE_SIZE / 2) * MINIMAP_SCALE;
-            const playerZ = (camera.position.z / CELL_SIZE + MAZE_SIZE / 2) * MINIMAP_SCALE;
+            const playerX = (camera.position.x / CELL_SIZE + MAZE_SIZE / 2 - 0.5) * MINIMAP_SCALE;
+            const playerZ = (camera.position.z / CELL_SIZE + MAZE_SIZE / 2 - 0.5) * MINIMAP_SCALE;
             minimapCtx.fillStyle = 'blue';
             minimapCtx.beginPath();
-            minimapCtx.arc(playerX, playerZ, MINIMAP_SCALE / 2, 0, 2 * Math.PI);
+            minimapCtx.arc(playerX, playerZ, MINIMAP_SCALE / 1.5, 0, 2 * Math.PI);
             minimapCtx.fill();
 
-            // Desenha inimigo
-            const enemyX = (enemy.position.x / CELL_SIZE + MAZE_SIZE / 2) * MINIMAP_SCALE;
-            const enemyZ = (enemy.position.z / CELL_SIZE + MAZE_SIZE / 2) * MINIMAP_SCALE;
+            const enemyX = (enemy.position.x / CELL_SIZE + MAZE_SIZE / 2 - 0.5) * MINIMAP_SCALE;
+            const enemyZ = (enemy.position.z / CELL_SIZE + MAZE_SIZE / 2 - 0.5) * MINIMAP_SCALE;
             minimapCtx.fillStyle = 'red';
             minimapCtx.beginPath();
-            minimapCtx.arc(enemyX, enemyZ, MINIMAP_SCALE / 2, 0, 2 * Math.PI);
+            minimapCtx.arc(enemyX, enemyZ, MINIMAP_SCALE / 1.5, 0, 2 * Math.PI);
             minimapCtx.fill();
         }
 
+    }); // Fim do 'DOMContentLoaded'
     </script>
 </body>
 </html>
