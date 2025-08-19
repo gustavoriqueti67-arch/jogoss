@@ -2,182 +2,440 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Labirinto 3D com IA</title>
+    <title>Labirinto 3D Avançado com IA</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
+        body { margin: 0; overflow: hidden; background-color: #000; cursor: pointer; }
         canvas { display: block; }
-        #instructions {
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 4px; height: 4px;
+            background-color: rgba(255, 255, 255, 0.7);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .overlay {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            color: white; font-family: 'Courier New', Courier, monospace;
+            background-color: rgba(0, 0, 0, 0.8);
+            text-align: center;
+        }
+        .overlay h1 { font-size: 4em; margin-bottom: 20px; text-shadow: 3px 3px #ff0000; }
+        .overlay p { font-size: 1.5em; max-width: 80%; }
+        .hidden { display: none; }
+        #minimap-container {
             position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            font-family: Arial, sans-serif;
+            bottom: 20px;
+            left: 20px;
+            border: 2px solid white;
             background-color: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
         }
     </style>
 </head>
 <body>
-    <div id="instructions">
-        Use W, A, S, D para andar<br>
-        Use as setas ⬅️ e ➡️ para virar
+    <div id="crosshair" class="hidden"></div>
+    <canvas id="minimap-container"></canvas>
+
+    <div id="start-screen" class="overlay">
+        <h1>LABIRINTO IA</h1>
+        <p>Use W, A, S, D para andar e o MOUSE para olhar.</p>
+        <p>Encontre o tesouro dourado e fuja do guardião vermelho.</p>
+        <p style="font-size: 2em; margin-top: 40px;">Clique para começar</p>
     </div>
 
-    <!-- Importa a biblioteca Three.js -->
+    <div id="win-screen" class="overlay hidden">
+        <h1>VOCÊ VENCEU!</h1>
+        <p>Você encontrou o tesouro e escapou.</p>
+        <p>Pressione F5 para jogar novamente com um novo labirinto.</p>
+    </div>
+
+    <div id="lose-screen" class="overlay hidden">
+        <h1>FIM DE JOGO</h1>
+        <p>O guardião te pegou.</p>
+        <p>Pressione F5 para tentar novamente.</p>
+    </div>
+
+    <!-- Importa a biblioteca Three.js e os controles -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
 
     <script>
-        // ============== CONFIGURAÇÃO BÁSICA DO 3D (THREE.JS) ==============
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x1a2a3a);
+        // ============== 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS ==============
+        let scene, camera, renderer, controls;
+        let lastTime = performance.now();
+        const objects = [];
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        let gameOver = false;
 
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        
-        const renderer = new THREE.WebGLRenderer();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        // Adiciona luz para que possamos ver os objetos
-        const ambientLight = new THREE.AmbientLight(0x606060);
-        scene.add(ambientLight);
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(1, 1, 0).normalize();
-        scene.add(directionalLight);
-
-
-        // ============== IA: GERAÇÃO DO LABIRINTO ==============
-        const MAZE_SIZE = 15; // O labirinto será 15x15 (use números ímpares)
-        const WALL_HEIGHT = 5;
-        const WALL_THICKNESS = 1;
+        const MAZE_SIZE = 21; // Tamanho do labirinto (deve ser ímpar)
         const CELL_SIZE = 10;
-        
-        // 0 = caminho, 1 = parede
-        const maze = Array(MAZE_SIZE).fill(null).map(() => Array(MAZE_SIZE).fill(1));
+        const WALL_HEIGHT = 5;
 
-        function generateMaze(x, y) {
-            maze[y][x] = 0; // Marca a célula atual como caminho
-            const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-            directions.sort(() => Math.random() - 0.5); // Embaralha as direções
+        // Elementos da UI
+        const startScreen = document.getElementById('start-screen');
+        const winScreen = document.getElementById('win-screen');
+        const loseScreen = document.getElementById('lose-screen');
+        const crosshair = document.getElementById('crosshair');
 
-            for (let [dx, dy] of directions) {
-                const nx = x + dx * 2;
-                const ny = y + dy * 2;
+        // Minimapa
+        const minimapCanvas = document.getElementById('minimap-container');
+        const minimapCtx = minimapCanvas.getContext('2d');
+        const MINIMAP_SCALE = 5;
+        minimapCanvas.width = MAZE_SIZE * MINIMAP_SCALE;
+        minimapCanvas.height = MAZE_SIZE * MINIMAP_SCALE;
 
-                if (nx >= 0 && nx < MAZE_SIZE && ny >= 0 && ny < MAZE_SIZE && maze[ny][nx] === 1) {
-                    maze[y + dy][x + dx] = 0; // Derruba a parede entre as células
-                    generateMaze(nx, ny);
+        // Jogo
+        let maze, treasure, enemy;
+        let enemyPath = [];
+        const ENEMY_SPEED = 2.0; // Velocidade do inimigo por segundo
+        let pathUpdateCounter = 0;
+
+        init();
+        animate();
+
+        // ============== 2. FUNÇÕES PRINCIPAIS (INIT E ANIMATE) ==============
+        function init() {
+            // Cena e Câmera
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a2a3a);
+            scene.fog = new THREE.Fog(0x1a2a3a, 0, MAZE_SIZE * CELL_SIZE * 0.6);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.y = WALL_HEIGHT / 2;
+
+            // Luzes
+            const ambientLight = new THREE.AmbientLight(0x606060);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 50, 50);
+            scene.add(directionalLight);
+
+            // Renderizador
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Controles com o Mouse
+            controls = new THREE.PointerLockControls(camera, document.body);
+            startScreen.addEventListener('click', () => {
+                controls.lock();
+            });
+            controls.addEventListener('lock', () => {
+                startScreen.classList.add('hidden');
+                crosshair.classList.remove('hidden');
+            });
+            controls.addEventListener('unlock', () => {
+                if (!gameOver) startScreen.classList.remove('hidden');
+                crosshair.classList.add('hidden');
+            });
+            scene.add(controls.getObject());
+
+            // Controles do Teclado
+            const onKeyDown = (event) => {
+                switch (event.code) {
+                    case 'ArrowUp': case 'KeyW': moveForward = true; break;
+                    case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
+                    case 'ArrowDown': case 'KeyS': moveBackward = true; break;
+                    case 'ArrowRight': case 'KeyD': moveRight = true; break;
                 }
-            }
-        }
-        
-        generateMaze(1, 1); // Começa a gerar o labirinto a partir da célula (1,1)
-
-        // ============== CRIAÇÃO DOS OBJETOS 3D DO LABIRINTO ==============
-        const wallGeometry = new THREE.BoxGeometry(CELL_SIZE, WALL_HEIGHT, CELL_SIZE);
-        const wallMaterial = new THREE.MeshLambertMaterial({ color: 0x888888 });
-
-        for (let y = 0; y < MAZE_SIZE; y++) {
-            for (let x = 0; x < MAZE_SIZE; x++) {
-                if (maze[y][x] === 1) {
-                    const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-                    wall.position.set(
-                        (x - MAZE_SIZE / 2) * CELL_SIZE,
-                        WALL_HEIGHT / 2,
-                        (y - MAZE_SIZE / 2) * CELL_SIZE
-                    );
-                    scene.add(wall);
+            };
+            const onKeyUp = (event) => {
+                switch (event.code) {
+                    case 'ArrowUp': case 'KeyW': moveForward = false; break;
+                    case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
+                    case 'ArrowDown': case 'KeyS': moveBackward = false; break;
+                    case 'ArrowRight': case 'KeyD': moveRight = false; break;
                 }
-            }
+            };
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+
+            // Geração do Mundo
+            maze = generateMaze(MAZE_SIZE, MAZE_SIZE);
+            createWorldFromMaze(maze);
+
+            // Posicionamento de Jogador, Tesouro e Inimigo
+            camera.position.x = (1 - MAZE_SIZE / 2) * CELL_SIZE;
+            camera.position.z = (1 - MAZE_SIZE / 2) * CELL_SIZE;
+
+            const treasureGeometry = new THREE.DodecahedronGeometry(1.5);
+            const treasureMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, roughness: 0.2, metalness: 0.8 });
+            treasure = new THREE.Mesh(treasureGeometry, treasureMaterial);
+            treasure.position.set(
+                (MAZE_SIZE - 2 - MAZE_SIZE / 2) * CELL_SIZE,
+                WALL_HEIGHT / 2,
+                (MAZE_SIZE - 2 - MAZE_SIZE / 2) * CELL_SIZE
+            );
+            scene.add(treasure);
+
+            const enemyGeometry = new THREE.SphereGeometry(1.5);
+            const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0x660000 });
+            enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
+            enemy.position.set(
+                (MAZE_SIZE - 2 - MAZE_SIZE / 2) * CELL_SIZE,
+                WALL_HEIGHT / 2,
+                (1 - MAZE_SIZE / 2) * CELL_SIZE
+            );
+            scene.add(enemy);
+
+            // Responsividade
+            window.addEventListener('resize', onWindowResize);
         }
 
-        // Chão
-        const floorGeometry = new THREE.PlaneGeometry(MAZE_SIZE * CELL_SIZE, MAZE_SIZE * CELL_SIZE);
-        const floorMaterial = new THREE.MeshLambertMaterial({ color: 0x444444 });
-        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-        floor.rotation.x = -Math.PI / 2;
-        floor.position.y = 0;
-        scene.add(floor);
-
-
-        // ============== CONTROLES E MOVIMENTO DO JOGADOR ==============
-        camera.position.set(
-            (1 - MAZE_SIZE / 2) * CELL_SIZE, // Posição inicial do jogador
-            WALL_HEIGHT / 2 - 1,
-            (1 - MAZE_SIZE / 2) * CELL_SIZE
-        );
-        
-        const playerSpeed = 0.2;
-        const turnSpeed = 0.03;
-        
-        const keys = {};
-        document.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
-        document.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
-
-        function isWall(x, z) {
-            const gridX = Math.floor((x / CELL_SIZE) + MAZE_SIZE / 2);
-            const gridZ = Math.floor((z / CELL_SIZE) + MAZE_SIZE / 2);
-            if (gridX < 0 || gridX >= MAZE_SIZE || gridZ < 0 || gridZ >= MAZE_SIZE) {
-                return true;
-            }
-            return maze[gridZ][gridX] === 1;
-        }
-
-        // ============== GAME LOOP (ANIMAÇÃO) ==============
         function animate() {
             requestAnimationFrame(animate);
 
-            // Rotação da câmera (virar)
-            if (keys['arrowleft']) camera.rotation.y += turnSpeed;
-            if (keys['arrowright']) camera.rotation.y -= turnSpeed;
+            if (gameOver) return;
 
-            // Movimento (andar)
-            const direction = new THREE.Vector3();
-            camera.getWorldDirection(direction);
+            const time = performance.now();
+            const delta = (time - lastTime) / 1000;
 
-            let moveX = 0;
-            let moveZ = 0;
+            // Movimento do jogador
+            if (controls.isLocked === true) {
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
 
-            if (keys['w']) {
-                moveX += direction.x * playerSpeed;
-                moveZ += direction.z * playerSpeed;
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize(); // garante movimento consistente em todas as direções
+
+                if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+
+                // Salva a posição antiga para checar colisão
+                const oldPosition = controls.getObject().position.clone();
+                
+                controls.moveRight(-velocity.x * delta);
+                controls.moveForward(-velocity.z * delta);
+
+                // Checagem de colisão
+                const newPosition = controls.getObject().position;
+                const playerGridX = Math.floor((newPosition.x / CELL_SIZE) + MAZE_SIZE / 2);
+                const playerGridZ = Math.floor((newPosition.z / CELL_SIZE) + MAZE_SIZE / 2);
+                
+                if (maze[playerGridZ] && maze[playerGridZ][playerGridX] === 1) {
+                    controls.getObject().position.copy(oldPosition); // Se colidiu, volta
+                }
             }
-            if (keys['s']) {
-                moveX -= direction.x * playerSpeed;
-                moveZ -= direction.z * playerSpeed;
+            
+            // Lógica do Inimigo
+            pathUpdateCounter += delta;
+            if (pathUpdateCounter > 1.0) { // Atualiza o caminho a cada 1 segundo
+                updateEnemyPath();
+                pathUpdateCounter = 0;
             }
-            if (keys['a']) {
-                moveX += direction.z * playerSpeed;
-                moveZ -= direction.x * playerSpeed;
+            moveEnemy(delta);
+
+            // Animação do tesouro
+            treasure.rotation.y += 0.5 * delta;
+            treasure.rotation.x += 0.5 * delta;
+
+            // Checagem de condições de vitória/derrota
+            if (camera.position.distanceTo(treasure.position) < 3) {
+                winGame();
             }
-            if (keys['d']) {
-                moveX -= direction.z * playerSpeed;
-                moveZ += direction.x * playerSpeed;
+            if (camera.position.distanceTo(enemy.position) < 2) {
+                loseGame();
             }
 
-            // Detecção de colisão simples
-            const nextX = camera.position.x + moveX;
-            const nextZ = camera.position.z + moveZ;
-            const collisionPadding = 2.0; // Distância do jogador até a parede para parar
-
-            if (!isWall(nextX, camera.position.z, collisionPadding)) {
-                camera.position.x = nextX;
-            }
-            if (!isWall(camera.position.x, nextZ, collisionPadding)) {
-                camera.position.z = nextZ;
-            }
-
+            drawMinimap();
+            lastTime = time;
             renderer.render(scene, camera);
         }
-
-        animate(); // Inicia o jogo
         
-        // Ajusta a tela se a janela do navegador mudar de tamanho
-        window.addEventListener('resize', () => {
+        // ============== 3. IA - GERAÇÃO DO LABIRINTO ==============
+        function generateMaze(width, height) {
+            let maze = Array(height).fill(null).map(() => Array(width).fill(1)); // 1 = parede
+            let stack = [];
+            let startX = 1, startY = 1;
+            
+            maze[startY][startX] = 0; // 0 = caminho
+            stack.push([startX, startY]);
+
+            while (stack.length > 0) {
+                let [x, y] = stack[stack.length - 1];
+                let neighbors = [];
+                // Checa vizinhos (distância de 2 células)
+                for (let [dx, dy] of [[0, -2], [0, 2], [-2, 0], [2, 0]]) {
+                    let nx = x + dx, ny = y + dy;
+                    if (ny > 0 && ny < height - 1 && nx > 0 && nx < width - 1 && maze[ny][nx] === 1) {
+                        neighbors.push([nx, ny]);
+                    }
+                }
+                
+                if (neighbors.length > 0) {
+                    let [nextX, nextY] = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    maze[nextY][nextX] = 0; // Abre caminho para o vizinho
+                    maze[(y + nextY) / 2][(x + nextX) / 2] = 0; // Abre parede entre eles
+                    stack.push([nextX, nextY]);
+                } else {
+                    stack.pop();
+                }
+            }
+            return maze;
+        }
+
+        // ============== 4. IA - BUSCA DE CAMINHO A* ==============
+        function aStar(start, end) {
+            let openSet = [start];
+            let cameFrom = new Map();
+
+            let gScore = new Map();
+            gScore.set(JSON.stringify(start), 0);
+
+            let fScore = new Map();
+            fScore.set(JSON.stringify(start), heuristic(start, end));
+
+            while (openSet.length > 0) {
+                let current = openSet.reduce((a, b) => fScore.get(JSON.stringify(a)) < fScore.get(JSON.stringify(b)) ? a : b);
+                
+                if (current.x === end.x && current.y === end.y) {
+                    return reconstructPath(cameFrom, current);
+                }
+
+                openSet = openSet.filter(node => !(node.x === current.x && node.y === current.y));
+
+                for (let [dx, dy] of [[0,1], [0,-1], [1,0], [-1,0]]) {
+                    let neighbor = { x: current.x + dx, y: current.y + dy };
+                    if (neighbor.x < 0 || neighbor.x >= MAZE_SIZE || neighbor.y < 0 || neighbor.y >= MAZE_SIZE || maze[neighbor.y][neighbor.x] === 1) {
+                        continue;
+                    }
+
+                    let tentativeGScore = gScore.get(JSON.stringify(current)) + 1;
+                    if (tentativeGScore < (gScore.get(JSON.stringify(neighbor)) || Infinity)) {
+                        cameFrom.set(JSON.stringify(neighbor), current);
+                        gScore.set(JSON.stringify(neighbor), tentativeGScore);
+                        fScore.set(JSON.stringify(neighbor), tentativeGScore + heuristic(neighbor, end));
+                        if (!openSet.some(node => node.x === neighbor.x && node.y === neighbor.y)) {
+                            openSet.push(neighbor);
+                        }
+                    }
+                }
+            }
+            return []; // Sem caminho
+        }
+
+        function heuristic(a, b) { // Distância de Manhattan
+            return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+        }
+
+        function reconstructPath(cameFrom, current) {
+            const totalPath = [current];
+            while (cameFrom.has(JSON.stringify(current))) {
+                current = cameFrom.get(JSON.stringify(current));
+                totalPath.unshift(current);
+            }
+            return totalPath;
+        }
+        
+        // ============== 5. LÓGICA DO INIMIGO E MUNDO ==============
+        function updateEnemyPath() {
+            const enemyGridPos = {
+                x: Math.round((enemy.position.x / CELL_SIZE) + MAZE_SIZE / 2),
+                y: Math.round((enemy.position.z / CELL_SIZE) + MAZE_SIZE / 2)
+            };
+            const playerGridPos = {
+                x: Math.floor((camera.position.x / CELL_SIZE) + MAZE_SIZE / 2),
+                y: Math.floor((camera.position.z / CELL_SIZE) + MAZE_SIZE / 2)
+            };
+            enemyPath = aStar(enemyGridPos, playerGridPos);
+            if (enemyPath && enemyPath.length > 1) {
+                enemyPath.shift(); // Remove a posição atual do inimigo
+            }
+        }
+
+        function moveEnemy(delta) {
+            if (!enemyPath || enemyPath.length === 0) return;
+
+            const nextPosGrid = enemyPath[0];
+            const targetPosWorld = new THREE.Vector3(
+                (nextPosGrid.x - MAZE_SIZE / 2) * CELL_SIZE,
+                WALL_HEIGHT / 2,
+                (nextPosGrid.y - MAZE_SIZE / 2) * CELL_SIZE
+            );
+
+            const direction = targetPosWorld.clone().sub(enemy.position).normalize();
+            const distance = enemy.position.distanceTo(targetPosWorld);
+
+            if (distance > 0.1) {
+                enemy.position.add(direction.multiplyScalar(ENEMY_SPEED * delta));
+            } else {
+                enemyPath.shift(); // Chegou ao nó, remove e vai para o próximo
+            }
+        }
+        
+        function createWorldFromMaze(mazeData) {
+            const wallGeometry = new THREE.BoxGeometry(CELL_SIZE, WALL_HEIGHT, CELL_SIZE);
+            const wallMaterial = new THREE.MeshLambertMaterial({ color: 0x556677 });
+            const floorGeometry = new THREE.PlaneGeometry(MAZE_SIZE * CELL_SIZE, MAZE_SIZE * CELL_SIZE);
+            const floorMaterial = new THREE.MeshLambertMaterial({ color: 0x445566 });
+            
+            for (let y = 0; y < MAZE_SIZE; y++) {
+                for (let x = 0; x < MAZE_SIZE; x++) {
+                    if (mazeData[y][x] === 1) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        wall.position.set(
+                            (x - MAZE_SIZE / 2) * CELL_SIZE,
+                            WALL_HEIGHT / 2,
+                            (y - MAZE_SIZE / 2) * CELL_SIZE
+                        );
+                        scene.add(wall);
+                    }
+                }
+            }
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.rotation.x = -Math.PI / 2;
+            scene.add(floor);
+        }
+
+        // ============== 6. FUNÇÕES AUXILIARES (UI, MINIMAPA, ETC) ==============
+        function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+        }
+
+        function winGame() {
+            gameOver = true;
+            controls.unlock();
+            winScreen.classList.remove('hidden');
+        }
+
+        function loseGame() {
+            gameOver = true;
+            controls.unlock();
+            loseScreen.classList.remove('hidden');
+        }
+
+        function drawMinimap() {
+            minimapCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+            // Desenha labirinto
+            for (let y = 0; y < MAZE_SIZE; y++) {
+                for (let x = 0; x < MAZE_SIZE; x++) {
+                    minimapCtx.fillStyle = maze[y][x] === 1 ? 'white' : '#555';
+                    minimapCtx.fillRect(x * MINIMAP_SCALE, y * MINIMAP_SCALE, MINIMAP_SCALE, MINIMAP_SCALE);
+                }
+            }
+            // Desenha jogador
+            const playerX = (camera.position.x / CELL_SIZE + MAZE_SIZE / 2) * MINIMAP_SCALE;
+            const playerZ = (camera.position.z / CELL_SIZE + MAZE_SIZE / 2) * MINIMAP_SCALE;
+            minimapCtx.fillStyle = 'blue';
+            minimapCtx.beginPath();
+            minimapCtx.arc(playerX, playerZ, MINIMAP_SCALE / 2, 0, 2 * Math.PI);
+            minimapCtx.fill();
+
+            // Desenha inimigo
+            const enemyX = (enemy.position.x / CELL_SIZE + MAZE_SIZE / 2) * MINIMAP_SCALE;
+            const enemyZ = (enemy.position.z / CELL_SIZE + MAZE_SIZE / 2) * MINIMAP_SCALE;
+            minimapCtx.fillStyle = 'red';
+            minimapCtx.beginPath();
+            minimapCtx.arc(enemyX, enemyZ, MINIMAP_SCALE / 2, 0, 2 * Math.PI);
+            minimapCtx.fill();
+        }
 
     </script>
 </body>
