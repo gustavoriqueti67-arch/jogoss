@@ -1,1 +1,184 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Labirinto 3D com IA</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #instructions {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: Arial, sans-serif;
+            background-color: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="instructions">
+        Use W, A, S, D para andar<br>
+        Use as setas ⬅️ e ➡️ para virar
+    </div>
 
+    <!-- Importa a biblioteca Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        // ============== CONFIGURAÇÃO BÁSICA DO 3D (THREE.JS) ==============
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a2a3a);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Adiciona luz para que possamos ver os objetos
+        const ambientLight = new THREE.AmbientLight(0x606060);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(1, 1, 0).normalize();
+        scene.add(directionalLight);
+
+
+        // ============== IA: GERAÇÃO DO LABIRINTO ==============
+        const MAZE_SIZE = 15; // O labirinto será 15x15 (use números ímpares)
+        const WALL_HEIGHT = 5;
+        const WALL_THICKNESS = 1;
+        const CELL_SIZE = 10;
+        
+        // 0 = caminho, 1 = parede
+        const maze = Array(MAZE_SIZE).fill(null).map(() => Array(MAZE_SIZE).fill(1));
+
+        function generateMaze(x, y) {
+            maze[y][x] = 0; // Marca a célula atual como caminho
+            const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+            directions.sort(() => Math.random() - 0.5); // Embaralha as direções
+
+            for (let [dx, dy] of directions) {
+                const nx = x + dx * 2;
+                const ny = y + dy * 2;
+
+                if (nx >= 0 && nx < MAZE_SIZE && ny >= 0 && ny < MAZE_SIZE && maze[ny][nx] === 1) {
+                    maze[y + dy][x + dx] = 0; // Derruba a parede entre as células
+                    generateMaze(nx, ny);
+                }
+            }
+        }
+        
+        generateMaze(1, 1); // Começa a gerar o labirinto a partir da célula (1,1)
+
+        // ============== CRIAÇÃO DOS OBJETOS 3D DO LABIRINTO ==============
+        const wallGeometry = new THREE.BoxGeometry(CELL_SIZE, WALL_HEIGHT, CELL_SIZE);
+        const wallMaterial = new THREE.MeshLambertMaterial({ color: 0x888888 });
+
+        for (let y = 0; y < MAZE_SIZE; y++) {
+            for (let x = 0; x < MAZE_SIZE; x++) {
+                if (maze[y][x] === 1) {
+                    const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                    wall.position.set(
+                        (x - MAZE_SIZE / 2) * CELL_SIZE,
+                        WALL_HEIGHT / 2,
+                        (y - MAZE_SIZE / 2) * CELL_SIZE
+                    );
+                    scene.add(wall);
+                }
+            }
+        }
+
+        // Chão
+        const floorGeometry = new THREE.PlaneGeometry(MAZE_SIZE * CELL_SIZE, MAZE_SIZE * CELL_SIZE);
+        const floorMaterial = new THREE.MeshLambertMaterial({ color: 0x444444 });
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = 0;
+        scene.add(floor);
+
+
+        // ============== CONTROLES E MOVIMENTO DO JOGADOR ==============
+        camera.position.set(
+            (1 - MAZE_SIZE / 2) * CELL_SIZE, // Posição inicial do jogador
+            WALL_HEIGHT / 2 - 1,
+            (1 - MAZE_SIZE / 2) * CELL_SIZE
+        );
+        
+        const playerSpeed = 0.2;
+        const turnSpeed = 0.03;
+        
+        const keys = {};
+        document.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
+        document.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+
+        function isWall(x, z) {
+            const gridX = Math.floor((x / CELL_SIZE) + MAZE_SIZE / 2);
+            const gridZ = Math.floor((z / CELL_SIZE) + MAZE_SIZE / 2);
+            if (gridX < 0 || gridX >= MAZE_SIZE || gridZ < 0 || gridZ >= MAZE_SIZE) {
+                return true;
+            }
+            return maze[gridZ][gridX] === 1;
+        }
+
+        // ============== GAME LOOP (ANIMAÇÃO) ==============
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Rotação da câmera (virar)
+            if (keys['arrowleft']) camera.rotation.y += turnSpeed;
+            if (keys['arrowright']) camera.rotation.y -= turnSpeed;
+
+            // Movimento (andar)
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+
+            let moveX = 0;
+            let moveZ = 0;
+
+            if (keys['w']) {
+                moveX += direction.x * playerSpeed;
+                moveZ += direction.z * playerSpeed;
+            }
+            if (keys['s']) {
+                moveX -= direction.x * playerSpeed;
+                moveZ -= direction.z * playerSpeed;
+            }
+            if (keys['a']) {
+                moveX += direction.z * playerSpeed;
+                moveZ -= direction.x * playerSpeed;
+            }
+            if (keys['d']) {
+                moveX -= direction.z * playerSpeed;
+                moveZ += direction.x * playerSpeed;
+            }
+
+            // Detecção de colisão simples
+            const nextX = camera.position.x + moveX;
+            const nextZ = camera.position.z + moveZ;
+            const collisionPadding = 2.0; // Distância do jogador até a parede para parar
+
+            if (!isWall(nextX, camera.position.z, collisionPadding)) {
+                camera.position.x = nextX;
+            }
+            if (!isWall(camera.position.x, nextZ, collisionPadding)) {
+                camera.position.z = nextZ;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        animate(); // Inicia o jogo
+        
+        // Ajusta a tela se a janela do navegador mudar de tamanho
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
